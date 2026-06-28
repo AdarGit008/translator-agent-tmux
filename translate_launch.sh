@@ -30,15 +30,22 @@ if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
     exit 1
 fi
 
-# Export key into tmux global environment (sessions inherit server env, not shell env)
-tmux setenv -g DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY" 2>/dev/null || true
+# Export key into tmux SESSION environment (not global — scoped to this session only)
+tmux setenv -t "$SESSION" DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY" 2>/dev/null || true
 
 # Read display refresh from config for alignment with engine poll interval
 DISPLAY_REFRESH=$(python3 -c "import json; print(json.load(open('$ENGINE_DIR/translator_config.json')).get('display_refresh_seconds', 3))" 2>/dev/null || echo 3)
 
+# Check if session already exists (idempotent guard)
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "Session '$SESSION' already exists. Attach: tmux attach -t $SESSION"
+    echo "Or kill it first: tmux kill-session -t $SESSION"
+    exit 1
+fi
+
 # Create session with Claude pane
 tmux new-session -d -s "$SESSION" -x 200 -y 50
-tmux send-keys -t "$SESSION" "cd '$PROJECT' && claude" Enter
+tmux send-keys -t "$SESSION" "cd $PROJECT && claude" Enter
 
 # Wait for Claude to start, then handle possible trust dialog
 sleep 4
@@ -56,18 +63,14 @@ fi
 # Split right for translator (narrow pane, 55 cols)
 tmux split-window -h -l 55 -t "$SESSION"
 
-# Start capture engine in background
+# Start capture engine in background, redirect stderr to a log file for debugging
+ENGINE_LOG="$ENGINE_DIR/engine_stderr.log"
 tmux send-keys -t "$SESSION:.1" \
-  "cd '$ENGINE_DIR' && python3 capture_translate.py '$PROJECT' '$SESSION' &" Enter
+  "cd $ENGINE_DIR && python3 capture_translate.py '$PROJECT' '$SESSION' 2>$ENGINE_LOG &" Enter
 sleep 2
 
-# Verify engine is running (check process exists)
-ENGINE_PID=""
-ENGINE_PID=$(tmux capture-pane -t "$SESSION:.1" -p 2>/dev/null | head -5 | grep "Translator engine started" >/dev/null && echo "ok" || echo "")
-# Fallback: just wait for the output file (engine creates it on first translation)
-# The display loop below handles "file not found" gracefully
-
 # Display translator output (refreshing loop, aligned with engine poll interval)
+# Note: engine errors go to $ENGINE_LOG — run 'tail -f $ENGINE_LOG' in a separate pane to debug
 tmux send-keys -t "$SESSION:.1" \
   "clear && echo '🔍 Translator — $(date +%H:%M:%S)' && echo '---' && while true; do clear; echo '🔍 Translator — $(date +%H:%M:%S)'; echo '---'; cat '$ENGINE_DIR/latest_translation.txt' 2>/dev/null || echo '⏳ Waiting for Claude to respond...'; sleep $DISPLAY_REFRESH; done" Enter
 

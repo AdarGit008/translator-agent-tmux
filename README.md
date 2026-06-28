@@ -4,6 +4,10 @@ Real-time plain-language translator sidecar for Claude Code CLI sessions in tmux
 
 A Python engine captures Claude Code's tmux pane, waits for the pane to stabilize, isolates the latest response, pipes it through DeepSeek for plain-language translation, and displays the result in a split tmux pane.
 
+## Important: Privacy Notice
+
+The engine sends captured tmux pane content (including Claude Code's output and your prompts) to DeepSeek's API for translation. Do not use this tool with projects that display secrets, tokens, or sensitive data in the terminal. The translations are ephemeral — not saved or logged.
+
 ## Install
 
 ```bash

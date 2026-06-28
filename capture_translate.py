@@ -23,11 +23,14 @@ config = {}
 pane_target = ""
 
 def capture_pane():
-    """Capture FULL pane content (no line limit)."""
+    """Capture FULL pane content (no line limit). Returns empty string on failure."""
     result = subprocess.run(
         ["tmux", "capture-pane", "-t", pane_target, "-p"],
         capture_output=True, text=True
     )
+    if result.returncode != 0:
+        print(f"WARNING: tmux capture-pane failed (rc={result.returncode}): {result.stderr.strip()}", file=sys.stderr)
+        return ""
     return result.stdout
 
 def extract_claude_responses(text):
@@ -127,53 +130,52 @@ def main():
     print(f"  Poll: {poll_interval}s, stable-after: {stable_polls} polls, debug: {debug}")
 
     # --- Main loop ---
-
+    # Two variables for stability tracking:
+    #   last_capture          — previous raw capture (for detecting "pane unchanged")
+    #   last_processed_capture — last capture we actually translated (for dedup)
+    last_capture = ""
     stable_count = 0
 
     while True:
         try:
             current = capture_pane()
 
-            # Stability tracking: count consecutive identical polls
-            if current == last_processed_capture:
-                # Pane matches the last content we already processed — fully stable
-                stable_count = stable_polls  # max out
-            elif last_processed_capture and current != last_processed_capture:
-                # Pane changed — track stability toward N consecutive matches
-                if stable_count == 0:
-                    stable_count = 1
-                # If we were already stable but content changed again,
-                # it means a NEW response appeared — process it, then reset
-                if stable_count >= stable_polls:
-                    # Extract and translate new content
-                    responses = extract_claude_responses(current)
-                    if debug and responses:
-                        _debug_log(f"Extracted {len(responses)} response block(s)")
+            # --- Stability tracking: count consecutive identical polls ---
+            if current and current == last_capture:
+                stable_count += 1
+            else:
+                stable_count = 1
+            last_capture = current
 
-                    for i, resp in enumerate(responses):
+            # --- Process when stable AND content is new ---
+            if stable_count >= stable_polls and current != last_processed_capture:
+                responses = extract_claude_responses(current)
+                if debug and responses:
+                    _debug_log(f"Extracted {len(responses)} response block(s)")
+
+                for i, resp in enumerate(responses):
+                    if debug:
+                        _debug_log(f"Block {i+1}: {resp[:150]}...")
+
+                    h = hashlib.md5(resp.encode(), usedforsecurity=False).hexdigest()
+                    if h in seen_hashes:
                         if debug:
-                            _debug_log(f"Block {i+1}: {resp[:150]}...")
+                            _debug_log(f"  Skipping (already seen)")
+                        continue
+                    if len(resp.strip()) < min_chars:
+                        if debug:
+                            _debug_log(f"  Skipping (too short: {len(resp.strip())} chars)")
+                        continue
 
-                        h = hashlib.md5(resp.encode()).hexdigest()
-                        if h in seen_hashes:
-                            if debug:
-                                _debug_log(f"  Skipping (already seen)")
-                            continue
-                        if len(resp.strip()) < min_chars:
-                            if debug:
-                                _debug_log(f"  Skipping (too short: {len(resp.strip())} chars)")
-                            continue
+                    seen_hashes.append(h)
+                    translation = llm_translate(resp, repo_snapshot, config)
+                    if translation.strip():
+                        OUTPUT_FILE.write_text(translation)
+                        if debug:
+                            _debug_log(f"  Translation: {translation[:120]}...")
 
-                        seen_hashes.append(h)
-                        translation = llm_translate(resp, repo_snapshot, config)
-                        if translation.strip():
-                            OUTPUT_FILE.write_text(translation)
-                            if debug:
-                                _debug_log(f"  Translation: {translation[:120]}...")
-
-                    # Update processed state
-                    last_processed_capture = current
-                    stable_count = 0  # reset for next response
+                # Mark this capture as processed
+                last_processed_capture = current
 
             time.sleep(poll_interval)
 

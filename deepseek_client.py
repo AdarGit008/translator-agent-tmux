@@ -10,9 +10,9 @@ def translate(claude_output: str, repo_snapshot: str, config: dict) -> str:
     system_prompt = PROMPT_FILE.read_text()
 
     user_msg = (
-        f"REPO SNAPSHOT:\n{repo_snapshot}\n\n"
+        f"{repo_snapshot}\n\n"
         f"---\n\n"
-        f"CLAUDE OUTPUT:\n{claude_output}"
+        f"AI AGENT OUTPUT:\n{claude_output}"
     )
 
     api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -24,7 +24,7 @@ def translate(claude_output: str, repo_snapshot: str, config: dict) -> str:
         user_msg = _truncate_at_paragraph(user_msg, MAX_INPUT_CHARS)
 
     payload = {
-        "model": config["model"],
+        "model": config.get("model", "deepseek-chat"),
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_msg}
@@ -39,7 +39,7 @@ def translate(claude_output: str, repo_snapshot: str, config: dict) -> str:
     }
 
     req = urllib.request.Request(
-        f"{config['api_base']}/chat/completions",
+        f"{config.get('api_base', 'https://api.deepseek.com/v1')}/chat/completions",
         data=json.dumps(payload).encode(),
         headers=headers
     )
