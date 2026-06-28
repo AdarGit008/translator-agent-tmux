@@ -62,32 +62,8 @@ tmux send-keys -t "$ENGINE_PANE" \
 sleep 2
 
 # ── Display loop ──
-# Uses word-wrap (fold -s) and ANSI colors:
-#   Green  = normal translations
-#   Yellow = ⚠️ NEEDS YOUR DECISION
-#   Cyan   = header
-DISPLAY_CMD='
-clear
-echo -e "\033[36m┌─ Translator ─ $(date +%H:%M:%S) ─┐\033[0m"
-OUT=$(cat '"$ENGINE_DIR"'/latest_translation.txt 2>/dev/null)
-if [ -z "$OUT" ]; then
-  echo -e "  \033[90m⏳ Waiting for Claude...\033[0m"
-else
-  echo "$OUT" | while IFS= read -r line; do
-    case "$line" in
-      *⚠️*NEEDS*YOUR*DECISION*|*⚠️*)
-        echo -e "\033[33m$line\033[0m" ;;
-      "")
-        echo "" ;;
-      *)
-        echo -e "\033[32m$line\033[0m" ;;
-    esac
-  done | fold -s -w 52
-fi
-echo -e "\033[36m└──────────────────────────────┘\033[0m"
-'
 tmux send-keys -t "$ENGINE_PANE" \
-  "clear && while true; do $DISPLAY_CMD; sleep $DISPLAY_REFRESH; done" Enter
+  "bash $ENGINE_DIR/display_translator.sh $DISPLAY_REFRESH $ENGINE_DIR" Enter
 
 # ── Focus Claude ──
 tmux select-pane -t "$CLAUDE_PANE"
