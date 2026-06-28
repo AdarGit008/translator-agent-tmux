@@ -2,3 +2,4 @@ latest_translation.txt
 debug_responses.txt
 __pycache__/
 *.pyc
+deploy_to_vps.py
