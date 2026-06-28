@@ -1,8 +1,11 @@
 """Core engine — monitors Claude Code tmux pane, translates responses.
 
-Target Claude Code version: v2.x (TUI: '> ' user prompts, '❯' cursor).
-If Anthropic changes the TUI, update _looks_like_user_input() and
-_looks_like_claude_prompt(). Enable debug mode to inspect extracted blocks.
+Usage: capture_translate.py <repo_path> [session_name] [pane_target]
+
+  repo_path    — project directory for snapshot context
+  session_name — tmux session name (default: "dev")
+  pane_target  — explicit tmux pane target (default: session_name:.0)
+                 Use tmux pane IDs from 'tmux list-panes -F \"#{pane_id}\"'
 """
 import subprocess, time, hashlib, os, json, sys
 from collections import deque
@@ -15,37 +18,32 @@ CONFIG_FILE = BASE / "translator_config.json"
 OUTPUT_FILE = BASE / "latest_translation.txt"
 DEBUG_FILE = BASE / "debug_responses.txt"
 
-# Runtime state
 last_processed_capture = ""
-seen_hashes = deque(maxlen=50)  # deterministic recency
+seen_hashes = deque(maxlen=50)
 repo_snapshot = ""
 config = {}
 pane_target = ""
 
+
 def capture_pane():
-    """Capture FULL pane content (no line limit). Returns empty string on failure."""
+    """Capture FULL pane content. Returns empty string on failure."""
     result = subprocess.run(
         ["tmux", "capture-pane", "-t", pane_target, "-p"],
-        capture_output=True, text=True
+        capture_output=True, text=True,
     )
     if result.returncode != 0:
-        print(f"WARNING: tmux capture-pane failed (rc={result.returncode}): {result.stderr.strip()}", file=sys.stderr)
+        print(
+            f"WARNING: capture-pane failed (rc={result.returncode}): "
+            f"{result.stderr.strip()}",
+            file=sys.stderr,
+        )
         return ""
     return result.stdout
 
+
 def extract_claude_responses(text):
-    """
-    Extract Claude response blocks from captured pane.
-
-    Claude Code v2.x TUI characteristics:
-    - User input lines start with '> ' or '▶'
-    - The '❯' prompt appears when Claude is waiting for input
-    - Claude's output appears between these markers
-
-    This IS TUI-coupled. If Claude's UI changes, update the heuristics below.
-    Enable debug mode (config.debug=true) to inspect what the parser extracts.
-    """
-    lines = text.split('\n')
+    """Extract Claude response blocks from captured pane."""
+    lines = text.split("\n")
     responses = []
     in_response = False
     current = []
@@ -53,16 +51,16 @@ def extract_claude_responses(text):
     for line in lines:
         stripped = line.strip()
 
-        if _looks_like_user_input(stripped):
+        if stripped.startswith("> ") or stripped.startswith("▶"):
             if current:
-                responses.append('\n'.join(current))
+                responses.append("\n".join(current))
                 current = []
             in_response = False
             continue
 
-        if _looks_like_claude_prompt(stripped):
+        if "❯" in stripped and len(stripped) < 40:
             if current:
-                responses.append('\n'.join(current))
+                responses.append("\n".join(current))
                 current = []
             in_response = True
             continue
@@ -72,47 +70,40 @@ def extract_claude_responses(text):
 
     return responses
 
-def _looks_like_user_input(line: str) -> bool:
-    """Heuristic: user input starts with '> ' or '▶'."""
-    return line.startswith('> ') or line.startswith('▶')
-
-def _looks_like_claude_prompt(line: str) -> bool:
-    """Heuristic: Claude's '❯' prompt is a short line ending the output."""
-    return '❯' in line and len(line) < 40
-
-def _debug_log(msg: str):
-    """Write debug messages to stderr and append to debug file."""
-    print(f"[DEBUG] {msg}", file=sys.stderr)
-    with open(DEBUG_FILE, 'a') as f:
-        f.write(f"{msg}\n")
 
 def main():
-    global last_processed_capture, repo_snapshot, config, pane_target
+    global last_processed_capture, seen_hashes, repo_snapshot, config, pane_target
 
-    # --- Startup: parse args, load config, verify state ---
-
+    # ── Parse args ──
     if len(sys.argv) < 2:
-        print("Usage: capture_translate.py <repo_path> [session_name]", file=sys.stderr)
+        print(
+            "Usage: capture_translate.py <repo_path> [session_name] [pane_target]",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     repo_path = os.path.abspath(sys.argv[1])
     session_name = sys.argv[2] if len(sys.argv) > 2 else "dev"
-    pane_target = f"{session_name}:.0"
 
-    # Load static config
+    # Use explicit pane target if provided, otherwise build from session
+    if len(sys.argv) > 3 and sys.argv[3]:
+        pane_target = sys.argv[3]
+    else:
+        pane_target = f"{session_name}:.0"
+
+    # ── Load config ──
     try:
         config = json.loads(CONFIG_FILE.read_text())
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"FATAL: Cannot read config: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Repo snapshot (one-time)
+    # ── Build repo snapshot ──
     repo_snapshot = build_snapshot(repo_path)
 
-    # Verify DeepSeek key
+    # ── Verify API key ──
     if not os.environ.get("DEEPSEEK_API_KEY"):
-        print("FATAL: DEEPSEEK_API_KEY environment variable not set", file=sys.stderr)
-        print("Set it with: export DEEPSEEK_API_KEY=sk-...", file=sys.stderr)
+        print("FATAL: DEEPSEEK_API_KEY not set", file=sys.stderr)
         sys.exit(1)
 
     poll_interval = config.get("poll_interval_seconds", 3)
@@ -120,19 +111,13 @@ def main():
     min_chars = config.get("min_response_chars", 30)
     debug = config.get("debug", False)
 
-    if debug:
-        _debug_log(f"Debug mode enabled. Repo={repo_path}, Session={session_name}")
-        DEBUG_FILE.write_text("")  # clear debug file for this session
+    print(f"Translator engine started.", file=sys.stderr)
+    print(f"  Repo: {repo_path}", file=sys.stderr)
+    print(f"  Session: {session_name}", file=sys.stderr)
+    print(f"  Pane: {pane_target}", file=sys.stderr)
+    print(f"  Poll: {poll_interval}s, stable: {stable_polls}p", file=sys.stderr)
 
-    print(f"Translator engine started.")
-    print(f"  Repo: {repo_path}")
-    print(f"  Session: {session_name} (pane: {pane_target})")
-    print(f"  Poll: {poll_interval}s, stable-after: {stable_polls} polls, debug: {debug}")
-
-    # --- Main loop ---
-    # Two variables for stability tracking:
-    #   last_capture          — previous raw capture (for detecting "pane unchanged")
-    #   last_processed_capture — last capture we actually translated (for dedup)
+    # ── Main loop ──
     last_capture = ""
     stable_count = 0
 
@@ -140,55 +125,51 @@ def main():
         try:
             current = capture_pane()
 
-            # --- Stability tracking: count consecutive identical polls ---
-            if current and current == last_capture:
+            if not current:
+                time.sleep(poll_interval)
+                continue
+
+            # ── Stability tracking ──
+            if current == last_capture:
                 stable_count += 1
             else:
                 stable_count = 1
             last_capture = current
 
-            # --- Process when stable AND content is new ---
+            # ── Process when stable AND new ──
             if stable_count >= stable_polls and current != last_processed_capture:
                 responses = extract_claude_responses(current)
-                if debug and responses:
-                    _debug_log(f"Extracted {len(responses)} response block(s)")
 
-                for i, resp in enumerate(responses):
-                    if debug:
-                        _debug_log(f"Block {i+1}: {resp[:150]}...")
-
+                for resp in responses:
                     h = hashlib.md5(resp.encode(), usedforsecurity=False).hexdigest()
                     if h in seen_hashes:
-                        if debug:
-                            _debug_log(f"  Skipping (already seen)")
                         continue
                     if len(resp.strip()) < min_chars:
-                        if debug:
-                            _debug_log(f"  Skipping (too short: {len(resp.strip())} chars)")
                         continue
 
                     seen_hashes.append(h)
-                    translation = llm_translate(resp, repo_snapshot, config)
-                    if translation.strip():
-                        OUTPUT_FILE.write_text(translation)
-                        if debug:
-                            _debug_log(f"  Translation: {translation[:120]}...")
+                    try:
+                        translation = llm_translate(resp, repo_snapshot, config)
+                        if translation.strip():
+                            OUTPUT_FILE.write_text(translation)
+                            if debug:
+                                print(f"[DEBUG] Translated: {translation[:120]}...", file=sys.stderr)
+                    except Exception as e:
+                        print(f"Translation error: {e}", file=sys.stderr)
 
-                # Mark this capture as processed
                 last_processed_capture = current
 
             time.sleep(poll_interval)
 
-        except (subprocess.SubprocessError, OSError, ConnectionError) as e:
-            # Transient: tmux issues, network timeouts on API call
-            print(f"Transient error: {e}", file=sys.stderr)
-            time.sleep(poll_interval)
         except KeyboardInterrupt:
             break
+        except (subprocess.SubprocessError, OSError, ConnectionError) as e:
+            print(f"Transient: {e}", file=sys.stderr)
+            time.sleep(poll_interval)
         except Exception as e:
-            # Fatal: unexpected errors — log and exit rather than silent looping
             print(f"FATAL: {e}", file=sys.stderr)
             sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
