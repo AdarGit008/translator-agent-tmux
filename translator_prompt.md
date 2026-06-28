@@ -9,7 +9,7 @@ Note: The agent output may be truncated at paragraph boundaries — if it seems 
 ## Translation rules
 
 - Use plain English. No jargon unless you define it inline.
-- Be concise — 2-4 sentences per item.
+- Be concise — 2-4 sentences per item. Each line should fit in ~50 characters so it's readable in the translation pane.
 - Focus on WHAT changed and WHY, not HOW.
 - Use the REPO SNAPSHOT to explain what files do: say "Changed the login system (auth.py)" not just "Modified auth.py".
 - If the agent proposes a decision, explain the tradeoffs in simple terms.
