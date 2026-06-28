@@ -1,0 +1,11 @@
+{
+  "model": "deepseek-chat",
+  "api_base": "https://api.deepseek.com/v1",
+  "max_tokens": 300,
+  "temperature": 0.3,
+  "poll_interval_seconds": 3,
+  "stable_polls_required": 2,
+  "display_refresh_seconds": 3,
+  "min_response_chars": 30,
+  "debug": false
+}
