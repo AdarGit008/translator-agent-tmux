@@ -39,7 +39,7 @@ tmux setenv -g DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY" 2>/dev/null || true
 
 # ── Create session & launch Claude ──
 tmux new-session -d -s "$SESSION" -x 200 -y 50
-tmux send-keys -t "$SESSION" "cd $PROJECT && claude" Enter
+tmux send-keys -t "$SESSION" "cd '$PROJECT' && claude" Enter
 
 # Wait for Claude to load (skip trust dialog — user must pre-trust)
 sleep 5
