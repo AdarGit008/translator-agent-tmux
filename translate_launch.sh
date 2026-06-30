@@ -2,24 +2,36 @@
 # Launch Claude Code with translator sidecar in tmux
 # Usage: tlate <project-path> [session-name]
 #
+# This script auto-detects its own directory — clone the repo anywhere.
+#   git clone https://github.com/AdarGit008/translator-agent-tmux.git ~/translator
+#   alias tlate='~/translator/translate_launch.sh'
+#
 # PREREQUISITE: Run 'claude' manually once in the project directory
 # to accept the trust dialog before using tlate.
 #
 # Environment:
-#   TRANSLATOR_DIR  — install path (default: /opt/translator-agent-tmux)
+#   TRANSLATOR_DIR  — override auto-detected repo path (rarely needed)
 #   DEEPSEEK_API_KEY — required
 
 set -euo pipefail
 
 PROJECT="${1:?Usage: tlate <project-path> [session-name]}"
 SESSION="${2:-dev}"
-ENGINE_DIR="${TRANSLATOR_DIR:-/opt/translator-agent-tmux}"
 CLAUDE_BOOT_TIMEOUT=30
+
+# Auto-detect engine directory (location of this script)
+ENGINE_DIR="${TRANSLATOR_DIR:-$(cd "$(dirname "$0")" && pwd)}"
 
 # ── Validate inputs ──
 [ -d "$PROJECT" ] || { echo "ERROR: Directory not found: $PROJECT"; exit 1; }
 PROJECT="$(realpath "$PROJECT")"
 [ -n "${DEEPSEEK_API_KEY:-}" ] || { echo "ERROR: DEEPSEEK_API_KEY not set"; exit 1; }
+[ -f "$ENGINE_DIR/capture_translate.py" ] || {
+    echo "ERROR: Engine files not found in $ENGINE_DIR"
+    echo "  Clone: git clone https://github.com/AdarGit008/translator-agent-tmux.git ~/translator"
+    echo "  Or set: export TRANSLATOR_DIR=/path/to/cloned/repo"
+    exit 1
+}
 
 # ── Idempotency guard ──
 if tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -81,12 +93,12 @@ echo "Engine pane: $ENGINE_PANE"
 # ── Start capture engine ──
 ENGINE_LOG="$ENGINE_DIR/engine_stderr.log"
 tmux send-keys -t "$ENGINE_PANE" \
-  "cd $ENGINE_DIR && python3 capture_translate.py '$PROJECT' '$SESSION' '$CLAUDE_PANE' 2>$ENGINE_LOG &" Enter
+  "cd '$ENGINE_DIR' && python3 capture_translate.py '$PROJECT' '$SESSION' '$CLAUDE_PANE' 2>$ENGINE_LOG &" Enter
 sleep 2
 
 # ── Display loop ──
 tmux send-keys -t "$ENGINE_PANE" \
-  "bash $ENGINE_DIR/display_translator.sh $DISPLAY_REFRESH $ENGINE_DIR" Enter
+  "bash '$ENGINE_DIR'/display_translator.sh $DISPLAY_REFRESH '$ENGINE_DIR'" Enter
 
 # ── Focus Claude ──
 tmux select-pane -t "$CLAUDE_PANE"

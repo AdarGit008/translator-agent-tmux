@@ -2,10 +2,13 @@
 # Install translator-agent-tmux on a new machine
 # Run from the repo root: ./install.sh
 # Idempotent — safe to re-run.
+#
+# The scripts are self-referencing so you can skip install entirely —
+# just clone anywhere, add the alias, and run.
 
 set -euo pipefail
 
-INSTALL_DIR="${TRANSLATOR_DIR:-/opt/translator-agent-tmux}"
+INSTALL_DIR="${TRANSLATOR_DIR:-$HOME/translator-agent-tmux}"
 ENGINE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "Installing translator-agent-tmux..."
@@ -14,10 +17,8 @@ echo "  Target: $INSTALL_DIR"
 
 # Create and populate install directory (idempotent)
 if [ "$ENGINE_DIR" != "$INSTALL_DIR" ]; then
-    sudo mkdir -p "$INSTALL_DIR"
-    sudo cp -r "$ENGINE_DIR"/* "$INSTALL_DIR/"
-    # Fix ownership so the user can write latest_translation.txt
-    sudo chown -R "$(whoami):$(id -gn)" "$INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR"
+    cp -r "$ENGINE_DIR"/* "$INSTALL_DIR/"
     echo "  Copied files to $INSTALL_DIR"
 else
     echo "  Already in install directory — skipping copy"
@@ -44,6 +45,11 @@ else
 fi
 
 echo ""
-echo "Done. Add this alias to your shell rc:"
+echo "Done. Add this to your shell rc:"
 echo "  alias tlate='$INSTALL_DIR/translate_launch.sh'"
 echo "  alias tlate-attach='tmux attach -t dev'"
+echo "  alias tl='tlate .'"
+echo ""
+echo "Or skip install — just clone anywhere and alias directly:"
+echo "  git clone https://github.com/AdarGit008/translator-agent-tmux.git ~/translator"
+echo "  alias tlate='~/translator/translate_launch.sh'"

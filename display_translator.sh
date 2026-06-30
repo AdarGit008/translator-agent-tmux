@@ -1,9 +1,10 @@
 #!/bin/bash
 # Translator display loop — word-wrapped, ANSI-colored output
 # Usage: display_translator.sh [refresh_seconds] [translator_dir]
+#   translator_dir defaults to this script's own directory (auto-detected).
 
 REFRESH="${1:-3}"
-DIR="${2:-/opt/translator-agent-tmux}"
+DIR="${2:-$(cd "$(dirname "$0")" && pwd)}"
 
 while true; do
     clear
