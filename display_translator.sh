@@ -7,22 +7,22 @@ DIR="${2:-/opt/translator-agent-tmux}"
 
 while true; do
     clear
-    echo -e "\033[36m┌─ Translator ─ $(date +%H:%M:%S) ─┐\033[0m"
+    printf '\033[36m┌─ Translator ─ %s ─┐\033[0m\n' "$(date +%H:%M:%S)"
     OUT=$(cat "$DIR/latest_translation.txt" 2>/dev/null)
     if [ -z "$OUT" ]; then
-        echo -e "  \033[90m⏳ Waiting for Claude...\033[0m"
+        printf '  \033[90m⏳ Waiting for Claude...\033[0m\n'
     else
-        echo "$OUT" | while IFS= read -r line; do
+        printf '%s\n' "$OUT" | while IFS= read -r line; do
             case "$line" in
                 *⚠️*NEEDS*YOUR*DECISION*|*⚠️*)
-                    echo -e "\033[33m$line\033[0m" ;;
+                    printf '\033[33m%s\033[0m\n' "$line" ;;
                 "")
-                    echo "" ;;
+                    printf '\n' ;;
                 *)
-                    echo -e "\033[32m$line\033[0m" ;;
+                    printf '\033[32m%s\033[0m\n' "$line" ;;
             esac
         done | fold -s -w 52
     fi
-    echo -e "\033[36m└──────────────────────────────┘\033[0m"
+    printf '\033[36m└──────────────────────────────┘\033[0m\n'
     sleep "$REFRESH"
 done

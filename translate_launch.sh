@@ -14,6 +14,7 @@ set -euo pipefail
 PROJECT="${1:?Usage: tlate <project-path> [session-name]}"
 SESSION="${2:-dev}"
 ENGINE_DIR="${TRANSLATOR_DIR:-/opt/translator-agent-tmux}"
+CLAUDE_BOOT_TIMEOUT=30
 
 # ── Validate inputs ──
 [ -d "$PROJECT" ] || { echo "ERROR: Directory not found: $PROJECT"; exit 1; }
@@ -41,10 +42,32 @@ tmux setenv -g DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY" 2>/dev/null || true
 tmux new-session -d -s "$SESSION" -x 200 -y 50
 tmux send-keys -t "$SESSION" "cd '$PROJECT' && claude" Enter
 
-# Wait for Claude to load (skip trust dialog — user must pre-trust)
-sleep 5
-tmux send-keys -t "$SESSION" Enter   # best-effort trust dialog fallback
-sleep 2
+# ── Wait for Claude to be ready (poll for known prompt patterns) ──
+echo "Waiting for Claude to boot..."
+boot_start=$SECONDS
+claude_ready=0
+while [ $((SECONDS - boot_start)) -lt "$CLAUDE_BOOT_TIMEOUT" ]; do
+    pane_content=$(tmux capture-pane -t "$SESSION" -p 2>/dev/null || true)
+
+    # Claude is ready when we see its prompt or a response indicator
+    if echo "$pane_content" | grep -qE '❯|claude|Claude|CLAUDE'; then
+        # Give it a moment to settle, then send Enter for any trust dialog
+        sleep 2
+        tmux send-keys -t "$SESSION" Enter
+        sleep 1
+        claude_ready=1
+        break
+    fi
+    sleep 1
+done
+
+if [ "$claude_ready" -eq 0 ]; then
+    echo "WARNING: Claude may not be fully ready after ${CLAUDE_BOOT_TIMEOUT}s"
+    echo "  If the translator pane shows no output, re-run Claude first with: claude"
+    # Best-effort fallback
+    sleep 3
+    tmux send-keys -t "$SESSION" Enter
+fi
 
 # ── Get real pane IDs (tmux may re-index windows) ──
 CLAUDE_PANE=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | head -1)

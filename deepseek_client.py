@@ -1,12 +1,15 @@
-"""DeepSeek API client — single-pass translation."""
-import os, json, urllib.request
+"""DeepSeek API client — translation with retry on transient failures."""
+import os, json, time, urllib.request, urllib.error
 from pathlib import Path
 
 PROMPT_FILE = Path(__file__).parent / "translator_prompt.md"
 MAX_INPUT_CHARS = 12000  # generous cap; truncate at paragraph boundary
+MAX_RETRIES = 3
+RETRY_BACKOFF_SEC = 1.5  # exponential multiplier
+RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 
 def translate(claude_output: str, repo_snapshot: str, config: dict) -> str:
-    """Call DeepSeek. Returns translation or empty string."""
+    """Call DeepSeek with retry. Returns translation or raises after exhaustion."""
     system_prompt = PROMPT_FILE.read_text()
 
     user_msg = (
@@ -33,6 +36,32 @@ def translate(claude_output: str, repo_snapshot: str, config: dict) -> str:
         "temperature": config.get("temperature", 0.3)
     }
 
+    last_error = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            return _call_api(payload, api_key, config)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, ConnectionError) as e:
+            last_error = e
+
+            # Don't retry on 4xx (except 429 rate-limit)
+            if isinstance(e, urllib.error.HTTPError):
+                if e.code not in RETRYABLE_STATUSES:
+                    raise
+
+            if attempt < MAX_RETRIES:
+                delay = RETRY_BACKOFF_SEC ** (attempt + 1)
+                time.sleep(delay)
+            else:
+                raise RuntimeError(
+                    f"DeepSeek API failed after {MAX_RETRIES + 1} attempts: {last_error}"
+                ) from last_error
+
+    # Should not reach here, but satisfy type checker
+    raise RuntimeError(f"DeepSeek API failed: {last_error}") from last_error
+
+
+def _call_api(payload: dict, api_key: str, config: dict) -> str:
+    """Single API call. Returns stripped translation text."""
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
@@ -47,6 +76,7 @@ def translate(claude_output: str, repo_snapshot: str, config: dict) -> str:
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = json.loads(resp.read())
         return data["choices"][0]["message"]["content"].strip()
+
 
 def _truncate_at_paragraph(text: str, max_chars: int) -> str:
     """Truncate at the last paragraph break within max_chars."""
