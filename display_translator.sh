@@ -22,7 +22,7 @@ while true; do
                 *)
                     printf '\033[32m%s\033[0m\n' "$line" ;;
             esac
-        done | fold -s -w 52
+        done | fold -s -w 54
     fi
     printf '\033[36m└──────────────────────────────┘\033[0m\n'
     sleep "$REFRESH"

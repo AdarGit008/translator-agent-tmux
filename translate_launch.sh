@@ -16,7 +16,12 @@
 set -euo pipefail
 
 PROJECT="${1:?Usage: tlate <project-path> [session-name]}"
-SESSION="${2:-dev}"
+# Per-project session name: tlate-<dirname> (or explicit second arg)
+if [ -n "${2:-}" ]; then
+    SESSION="$2"
+else
+    SESSION="tlate-$(basename "$PROJECT")"
+fi
 CLAUDE_BOOT_TIMEOUT=30
 
 # Auto-detect engine directory (location of this script)
@@ -47,8 +52,8 @@ import json
 print(json.load(open('$ENGINE_DIR/translator_config.json')).get('display_refresh_seconds', 3))
 " 2>/dev/null || echo 3)
 
-# ── Export API key ──
-tmux setenv -g DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY" 2>/dev/null || true
+# ── Export API key (scoped to this session only) ──
+tmux setenv -t "$SESSION" DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY" 2>/dev/null || true
 
 # ── Create session & launch Claude ──
 tmux new-session -d -s "$SESSION" -x 200 -y 50
@@ -62,7 +67,7 @@ while [ $((SECONDS - boot_start)) -lt "$CLAUDE_BOOT_TIMEOUT" ]; do
     pane_content=$(tmux capture-pane -t "$SESSION" -p 2>/dev/null || true)
 
     # Claude is ready when we see its prompt or a response indicator
-    if echo "$pane_content" | grep -qE '❯|claude|Claude|CLAUDE'; then
+    if echo "$pane_content" | grep -qE '⏣|❯'; then
         # Give it a moment to settle, then send Enter for any trust dialog
         sleep 2
         tmux send-keys -t "$SESSION" Enter
@@ -81,14 +86,12 @@ if [ "$claude_ready" -eq 0 ]; then
     tmux send-keys -t "$SESSION" Enter
 fi
 
-# ── Get real pane IDs (tmux may re-index windows) ──
+# ── Capture Claude pane ID directly ──
 CLAUDE_PANE=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | head -1)
-echo "Claude pane: $CLAUDE_PANE"
 
-# ── Split right for translator ──
-tmux split-window -h -l 55 -t "$CLAUDE_PANE"
-ENGINE_PANE=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | tail -1)
-echo "Engine pane: $ENGINE_PANE"
+# ── Split right for translator, capture engine pane ID directly ──
+ENGINE_PANE=$(tmux split-window -h -l 55 -t "$CLAUDE_PANE" -P -F '#{pane_id}')
+echo "Claude pane: $CLAUDE_PANE   Engine pane: $ENGINE_PANE"
 
 # ── Start capture engine ──
 ENGINE_LOG="$ENGINE_DIR/engine_stderr.log"
